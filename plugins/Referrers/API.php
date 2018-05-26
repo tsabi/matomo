@@ -418,9 +418,24 @@ class API extends \Piwik\Plugin\API
     {
         $dataTable = $this->getDataTable(Archiver::SOCIAL_NETWORKS_RECORD_NAME, $idSite, $period, $date, $segment, $expanded = true, $idSubtable);
 
-        if (!$dataTable->getRowsCountWithoutSummaryRow()) {
+        $isMap = false;
+        $hasEmptyTable = false;
+        if ($dataTable instanceof DataTable\Map) {
+            $isMap = true;
+            $dataTables = $dataTable->getDataTables();
+        } else {
+            $dataTables = [$dataTable];
+        }
 
-            $dataTable = $this->getDataTable(Archiver::WEBSITES_RECORD_NAME, $idSite, $period, $date, $segment, $expanded = true);
+        foreach ($dataTables as $table) {
+            if (!$table->getRowsCountWithoutSummaryRow()) {
+                $hasEmptyTable = true;
+                break;
+            }
+        }
+
+        if ($hasEmptyTable) {
+            $dataTableFiltered = $this->getDataTable(Archiver::WEBSITES_RECORD_NAME, $idSite, $period, $date, $segment, $expanded = true);
 
             // get the social network domain referred to by $idSubtable
             $socialNetworks = Social::getInstance()->getDefinitions();
@@ -438,7 +453,7 @@ class API extends \Piwik\Plugin\API
             }
 
             // filter out everything but social network indicated by $idSubtable
-            $dataTable->filter(
+            $dataTableFiltered->filter(
                 'ColumnCallbackDeleteRow',
                 array('label',
                     function ($url) use ($social) {
@@ -448,7 +463,23 @@ class API extends \Piwik\Plugin\API
             );
 
             // merge the datatable's subtables which contain the individual URLs
-            $dataTable = $dataTable->mergeSubtables();
+            $dataTableFiltered = $dataTableFiltered->mergeSubtables();
+
+            if (!$isMap) {
+                $dataTable = $dataTableFiltered;
+            } else {
+                $filteredTables = $dataTableFiltered->getDataTables();
+                foreach ($dataTables as $label => $table) {
+                    if (!$table->getRowsCountWithoutSummaryRow() && !empty($filteredTables[$label])) {
+                        $dataTable->addTable($filteredTables[$label], $label);
+                    }
+                }
+            }
+
+        } else {
+            $dataTable->filter('ColumnCallbackAddMetadata', array('label', 'url', function ($name) {
+                return Social::getInstance()->getMainUrlFromName($name);
+            }));
         }
 
         $dataTable->filter('AddSegmentByLabel', array('referrerUrl'));
