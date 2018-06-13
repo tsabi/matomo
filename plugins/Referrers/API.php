@@ -334,7 +334,7 @@ class API extends \Piwik\Plugin\API
     {
         $dataTable = Archive::createDataTableFromArchive(Archiver::SOCIAL_NETWORKS_RECORD_NAME, $idSite, $period, $date, $segment, $expanded, false);
 
-        $dataTable->filter('MetadataCallbackReplace', array('label', 'url', function ($name) {
+        $dataTable->filter('ColumnCallbackAddMetadata', array('label', 'url', function ($name) {
             return Social::getInstance()->getMainUrlFromName($name);
         }));
 
@@ -356,25 +356,8 @@ class API extends \Piwik\Plugin\API
             $dataTables = [$dataTable];
         }
 
-        $onlyMaps = true;
-        foreach ($dataTables as &$table) {
-            if ($table instanceof DataTable\Map) {
-                $table = $this->completeSocialTablesWithOldReports($table, $idSite, $period, $date, $segment, $expanded, $flat);
-                break;
-            } else {
-                $onlyMaps = false;
-            }
-        }
-
-        if ($onlyMaps) {
-            return $dataTable;
-        }
-
         foreach ($dataTables as $table) {
-            if (!$table instanceof DataTable) {
-                continue;
-            }
-            if (!$table->getRowsCountWithoutSummaryRow()) {
+            if ($table instanceof DataTable && !$table->getRowsCountWithoutSummaryRow()) {
                 $hasEmptyTable = true;
                 break;
             }
@@ -390,7 +373,7 @@ class API extends \Piwik\Plugin\API
             } else {
                 $filteredTables = $dataTableFiltered->getDataTables();
                 foreach ($dataTables as $label => $table) {
-                    if (!$table->getRowsCountWithoutSummaryRow() && !empty($filteredTables[$label])) {
+                    if ($table instanceof DataTable && !$table->getRowsCountWithoutSummaryRow() && !empty($filteredTables[$label])) {
                         $dataTable->addTable($filteredTables[$label], $label);
                     }
                 }
@@ -439,7 +422,15 @@ class API extends \Piwik\Plugin\API
      */
     public function getUrlsForSocial($idSite, $period, $date, $segment = false, $idSubtable = false)
     {
-        $dataTable = $this->getDataTable(Archiver::SOCIAL_NETWORKS_RECORD_NAME, $idSite, $period, $date, $segment, $expanded = true, $idSubtable);
+        try {
+            $dataTable = $this->getDataTable(Archiver::SOCIAL_NETWORKS_RECORD_NAME, $idSite, $period, $date, $segment, $expanded = true, $idSubtable);
+        } catch (\Exception $e) {
+            $dataTable = new DataTable();
+        }
+
+        $dataTable->filter('ColumnCallbackAddMetadata', array('label', 'url', function ($name) {
+            return Social::getInstance()->getMainUrlFromName($name);
+        }));
 
         $isMap = false;
         $hasEmptyTable = false;
@@ -451,7 +442,7 @@ class API extends \Piwik\Plugin\API
         }
 
         foreach ($dataTables as $table) {
-            if (!$table->getRowsCountWithoutSummaryRow()) {
+            if ($table instanceof DataTable && !$table->getRowsCountWithoutSummaryRow()) {
                 $hasEmptyTable = true;
                 break;
             }
@@ -485,6 +476,8 @@ class API extends \Piwik\Plugin\API
                 )
             );
 
+            $dataTableFiltered->filter('Piwik\Plugins\Referrers\DataTable\Filter\UrlsForSocial', array($expanded));
+
             // merge the datatable's subtables which contain the individual URLs
             $dataTableFiltered = $dataTableFiltered->mergeSubtables();
 
@@ -498,15 +491,10 @@ class API extends \Piwik\Plugin\API
                     }
                 }
             }
-
-        } else {
-            $dataTable->filter('ColumnCallbackAddMetadata', array('label', 'url', function ($name) {
-                return Social::getInstance()->getMainUrlFromName($name);
-            }));
         }
 
         $dataTable->filter('AddSegmentByLabel', array('referrerUrl'));
-        $dataTable->filter('Piwik\Plugins\Referrers\DataTable\Filter\UrlsForSocial', array($expanded));
+        $dataTable->queueFilter('ReplaceColumnNames');
 
         return $dataTable;
     }
